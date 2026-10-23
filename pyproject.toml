@@ -1,12 +1,26 @@
 [project]
 name = "dbt-pane"
 version = "0.1.0"
-description = "Terminal panel that shows what a dbt branch changes: models, target, docs, and lineage"
+description = "Terminal panel that shows what a dbt worktree changes: models, target, docs, and lineage"
+readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["dbt", "tui", "data-engineering", "lineage", "herdr", "tmux"]
+classifiers = [
+    "Environment :: Console :: Curses",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Database",
+    "Topic :: Software Development :: Version Control :: Git",
+]
 dependencies = [
     "pyyaml>=6.0",
     "textual>=3.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/shiv-io/dbt-pane"
 
 [project.scripts]
 dbt-pane = "dbt_pane.app:main"

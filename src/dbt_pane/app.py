@@ -13,8 +13,9 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Footer, Static, TabbedContent, TabPane
 
-from dbt_pane import git, render
+from dbt_pane import __version__, git, render
 from dbt_pane.debug import DebugResult, run_debug
+from dbt_pane.follow import FollowSource, detect_follow_source
 from dbt_pane.manifest import CommandResult, Manifest, install_packages, load_manifest, packages_missing, parse
 from dbt_pane.project import (
     DbtProject,
@@ -91,17 +92,20 @@ class DbtPaneApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, project_dir: str | None):
+    def __init__(self, project_dir: str | None, follow: FollowSource | None = None):
         super().__init__()
         self.project_dir = project_dir
+        self.follow = follow
         self.engine: Engine | None = None
+        self._engines: dict[Path, Engine] = {}
+        self._debug_results: dict[Path, DebugResult] = {}
+        self._debug_signatures: dict[Path, tuple] = {}
         self.snapshot: Snapshot | None = None
         self.debug_result: DebugResult | None = None
         self.debug_running = False
         self.status_text = "starting…"
         self.lineage_depth = DEFAULT_LINEAGE_DEPTH
         self._refresh_lock = threading.Lock()
-        self._debug_signature: tuple | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(id="header")
@@ -133,25 +137,49 @@ class DbtPaneApp(App):
             self._refresh_lock.release()
 
     def _refresh(self, force: bool) -> None:
+        if self.follow:
+            followed = self._followed_project()
+            if followed and (self.engine is None or followed.root != self.engine.project.root):
+                self.call_from_thread(self._switch_to, followed)
+                force = True
         if self.engine is None:
-            project = find_project(self.project_dir)
+            project = None if self.follow and self.project_dir is None else find_project(self.project_dir)
             if project is None:
                 self.call_from_thread(self._show_missing_project)
                 return
-            self.engine = Engine(project)
-            if self.engine.dbt is None:
-                self.call_from_thread(self._show_message, "Could not find a dbt executable. Install dbt or set DBT_PANE_DBT.")
-                return
+            self.call_from_thread(self._switch_to, project)
+            force = True
+        if self.engine.dbt is None:
+            self.call_from_thread(self._show_message, "Could not find a dbt executable. Install dbt or set DBT_PANE_DBT.")
+            return
 
+        root = self.engine.project.root
         signature = connection_config_signature(self.engine.project)
-        if signature != self._debug_signature and not self.debug_running:
-            self._debug_signature = signature
+        if signature != self._debug_signatures.get(root) and not self.debug_running:
+            self._debug_signatures[root] = signature
             self.call_from_thread(self.action_run_debug)
 
         if not force and not self.engine.needs_refresh():
             return
         snapshot = self.engine.collect(on_status=lambda m: self.call_from_thread(self._set_status, m))
         self.call_from_thread(self._show_snapshot, snapshot)
+
+    def _followed_project(self) -> DbtProject | None:
+        folder = self.follow.current_dir()
+        if folder is None:
+            return None
+        if self.engine and folder.resolve().is_relative_to(self.engine.project.root):
+            return self.engine.project
+        return find_project(str(folder), search_below=False)
+
+    def _switch_to(self, project: DbtProject) -> None:
+        if project.root not in self._engines:
+            self._engines[project.root] = Engine(project)
+        self.engine = self._engines[project.root]
+        self.snapshot = None
+        self.debug_result = self._debug_results.get(project.root)
+        self.status_text = f"loading {project.root.name}…"
+        self._render_header()
 
     def _set_status(self, status: str) -> None:
         self.status_text = status
@@ -161,6 +189,9 @@ class DbtPaneApp(App):
         self.query_one("#header", Static).update(render.header(self.snapshot, self.debug_result, self.status_text))
 
     def _show_missing_project(self) -> None:
+        if self.follow:
+            self._show_message(f"Following {self.follow.name} focus. Focus a pane inside a dbt project.")
+            return
         self._show_message(
             "No dbt_project.yml found in the focused pane's folder, its parents, or the folders below it.\n"
             "Open the panel from a pane inside a dbt project, or run dbt-pane --project-dir PATH."
@@ -173,7 +204,8 @@ class DbtPaneApp(App):
 
     def _show_snapshot(self, snapshot: Snapshot) -> None:
         self.snapshot = snapshot
-        self.status_text = f"updated {time.strftime('%H:%M:%S')}"
+        following = f" · following {self.follow.name}" if self.follow else ""
+        self.status_text = f"updated {time.strftime('%H:%M:%S')}{following}"
         self._render_header()
         self.query_one("#models-body", Static).update(render.models_view(snapshot))
         self.query_one("#docs-body", Static).update(render.docs_view(snapshot))
@@ -199,12 +231,16 @@ class DbtPaneApp(App):
 
     @work(thread=True, group="debug")
     def debug_worker(self) -> None:
-        result = run_debug(self.engine.dbt, self.engine.project.root)
-        self.call_from_thread(self._show_debug, result)
+        engine = self.engine
+        result = run_debug(engine.dbt, engine.project.root)
+        self.call_from_thread(self._show_debug, engine.project.root, result)
 
-    def _show_debug(self, result: DebugResult) -> None:
-        self.debug_result = result
+    def _show_debug(self, root: Path, result: DebugResult) -> None:
+        self._debug_results[root] = result
         self.debug_running = False
+        if self.engine is None or self.engine.project.root != root:
+            return
+        self.debug_result = result
         self._render_header()
         self._render_target()
 
@@ -241,8 +277,17 @@ def print_once(project_dir: str | None, with_debug: bool, depth: int) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Show what the current dbt worktree changes.")
-    parser.add_argument("--project-dir", help="dbt project folder. Defaults to the focused Herdr pane's folder.")
+    parser = argparse.ArgumentParser(prog="dbt-pane", description="Show what the current dbt worktree changes.")
+    parser.add_argument("--version", action="version", version=f"dbt-pane {__version__}")
+    parser.add_argument(
+        "--project-dir",
+        help="dbt project folder. Defaults to the focused Herdr pane's folder, or the current folder.",
+    )
+    parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="Switch to the dbt project of whichever Herdr or tmux pane has focus.",
+    )
     parser.add_argument("--once", action="store_true", help="Print one report and exit, without the interactive panel.")
     parser.add_argument("--no-debug", action="store_true", help="With --once, skip dbt debug.")
     parser.add_argument("--depth", type=int, default=DEFAULT_LINEAGE_DEPTH, help="Lineage depth each way.")
@@ -251,6 +296,11 @@ def main() -> None:
         args.project_dir = str(Path(args.project_dir).expanduser().resolve())
     if args.once:
         raise SystemExit(print_once(args.project_dir, not args.no_debug, args.depth))
-    app = DbtPaneApp(args.project_dir)
+    follow = None
+    if args.follow:
+        follow = detect_follow_source()
+        if follow is None:
+            parser.error("--follow needs Herdr or tmux, so it can see which pane has focus.")
+    app = DbtPaneApp(args.project_dir, follow)
     app.lineage_depth = args.depth
     app.run()

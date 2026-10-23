@@ -86,12 +86,12 @@ def _search_down(start: Path, depth: int) -> Path | None:
     return None
 
 
-def find_project(explicit: str | None = None) -> DbtProject | None:
+def find_project(explicit: str | None = None, search_below: bool = True) -> DbtProject | None:
     for start in _start_dirs(explicit):
         start = start.resolve()
         if not start.is_dir():
             continue
-        root = _search_up(start) or _search_down(start, DOWNWARD_SEARCH_DEPTH)
+        root = _search_up(start) or (_search_down(start, DOWNWARD_SEARCH_DEPTH) if search_below else None)
         if root:
             return load_project(root)
     return None

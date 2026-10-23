@@ -1,7 +1,7 @@
-# dbt pane
+# dbt-pane
 
-A Herdr plugin that opens a side panel for the dbt project in your current worktree.
-The panel refreshes by itself and has four tabs:
+A terminal panel that shows what your dbt worktree changes. It refreshes by itself while
+you work, and runs in any terminal, in tmux, or as a [Herdr](https://herdr.dev) plugin.
 
 | Tab | Shows |
 |---|---|
@@ -16,82 +16,63 @@ It works with dbt v2 and with dbt-core 1.x.
 
 ### 1. Install the requirements
 
-- [Herdr](https://herdr.dev) 0.9.0 or later
 - [uv](https://docs.astral.sh/uv/)
 - git
 - dbt v2 or dbt-core 1.x, with a working `profiles.yml` for your project
 
-### 2. Install the plugin
-
-From GitHub:
+### 2. Install dbt-pane
 
 ```sh
-herdr plugin install shiv-io/herdr-dbt
+uv tool install git+ssh://git@github.com/shiv-io/dbt-pane.git
 ```
 
-Or from a local clone:
+This puts a `dbt-pane` command on your `PATH`. Check it:
 
 ```sh
-git clone git@github.com:shiv-io/herdr-dbt.git
-herdr plugin link "$PWD/herdr-dbt"
+dbt-pane --version
 ```
 
-The first time the panel opens, `uv` creates the plugin's Python environment, so the
-first open is slower. Check that the plugin is there:
+To upgrade later, run `uv tool upgrade dbt-pane`.
+
+### 3. Run it
+
+Open a second terminal, or a split in your terminal or tmux, and run:
 
 ```sh
-herdr plugin list
+cd path/to/your/dbt/worktree
+dbt-pane
 ```
 
-### 3. Open the panel
+The first load takes a few seconds, because dbt-pane runs `dbt parse`, plus `dbt deps`
+if the worktree has no packages yet, and `dbt debug`. After that it updates within about
+2 seconds of any change.
 
-Focus a pane whose folder is inside your dbt project or worktree, then run:
+To watch a project without changing folder:
 
 ```sh
-herdr plugin action invoke shiv-io.herdr-dbt.open
+dbt-pane --project-dir path/to/your/dbt/worktree
 ```
 
-The panel opens as a split to the right of the focused pane. The panel finds the dbt
-project from the focused pane's folder, so run the command from the worktree you want
-to watch. To open it in its own tab instead:
+To print one report and exit, for example to paste into a pull request:
 
 ```sh
-herdr plugin action invoke shiv-io.herdr-dbt.open-tab
+dbt-pane --once
 ```
 
-The first load takes a few seconds, because the panel runs `dbt parse`, plus
-`dbt deps` if the worktree has no packages yet, and `dbt debug`.
-
-### 4. Bind a key (optional)
-
-Add this to `~/.config/herdr/config.toml`, then reload with `herdr server reload-config`:
-
-```toml
-[[keys.command]]
-key = "prefix+alt+d"
-type = "shell"
-command = "herdr plugin action invoke shiv-io.herdr-dbt.open"
-```
-
-### If you closed the panel
-
-Run the open command again from a pane in the dbt project:
+### 4. Follow the pane you are working in (tmux or Herdr)
 
 ```sh
-herdr plugin action invoke shiv-io.herdr-dbt.open
+dbt-pane --follow
 ```
 
-Or press your key binding. Closing the panel loses nothing: it keeps its parsed manifest
-in the Herdr plugin state folder, so it opens again quickly.
+With `--follow`, dbt-pane watches which pane has focus and switches to the dbt project in
+that pane's folder. When you move between worktrees, the panel moves with you. When you
+focus a pane that is not inside a dbt project, it keeps showing the last project. It keeps
+the results for each project it has seen, so switching back is quick.
 
-If the panel opens and closes straight away, or shows an error and asks you to press
-Enter, read the message in the pane. The most common causes are that `uv` or `dbt`
-is not installed, or that there is no `dbt_project.yml` in or near the focused pane's
-folder.
+`--follow` needs tmux or Herdr, because a plain terminal cannot report which pane has focus.
 
-## Use
-
-Keys inside the panel:
+## Keys
 
 | Key | Action |
 |---|---|
@@ -101,38 +82,98 @@ Keys inside the panel:
 | `[` and `]` | Show less or more lineage depth |
 | `q` | Quit |
 
-Open one panel for each worktree you are working in. Each panel stays on the worktree
-it was opened from.
+## Use with Herdr
 
-You can also run it without Herdr:
+The repository is also a Herdr plugin. The plugin opens dbt-pane in a Herdr pane next to
+the pane you are working in.
+
+### Install the plugin
+
+From GitHub:
 
 ```sh
-uv run dbt-pane --project-dir path/to/dbt/project
-uv run dbt-pane --once --project-dir path/to/dbt/project   # print one report and exit
+herdr plugin install shiv-io/dbt-pane
+```
+
+Or from a local clone:
+
+```sh
+git clone git@github.com:shiv-io/dbt-pane.git
+herdr plugin link "$PWD/dbt-pane"
+```
+
+The plugin runs the `dbt-pane` on your `PATH` if it is at least as new as the plugin.
+Otherwise it runs its own copy, which `uv` sets up the first time you open the panel.
+You do not need to install dbt-pane separately.
+
+### Open the panel
+
+Focus a pane whose folder is inside your dbt project or worktree, then run:
+
+```sh
+herdr plugin action invoke shiv-io.dbt-pane.open
+```
+
+The panel opens as a split to the right and stays on the worktree it was opened from.
+Open one panel for each worktree you are working in.
+
+| Action | Opens |
+|---|---|
+| `shiv-io.dbt-pane.open` | A split to the right, fixed on the focused pane's project |
+| `shiv-io.dbt-pane.open-tab` | A new tab, fixed on the focused pane's project |
+| `shiv-io.dbt-pane.open-follow` | A split to the right that follows focus, as `--follow` does |
+
+### If you closed the panel
+
+Run the open command again from a pane in the dbt project:
+
+```sh
+herdr plugin action invoke shiv-io.dbt-pane.open
+```
+
+Closing the panel loses nothing. dbt-pane keeps its parsed manifest in the Herdr plugin
+state folder, so it opens again quickly.
+
+If the panel shows an error and asks you to press Enter, read the message in the pane.
+The most common causes are that `uv` or `dbt` is not installed, or that there is no
+`dbt_project.yml` in or near the focused pane's folder.
+
+### Bind a key
+
+Add this to `~/.config/herdr/config.toml`, then run `herdr server reload-config`:
+
+```toml
+[[keys.command]]
+key = "prefix+alt+d"
+type = "shell"
+command = "herdr plugin action invoke shiv-io.dbt-pane.open"
 ```
 
 ## How it works
 
-- **Project.** The panel finds the dbt project from the folder of the pane that was
-  focused when you opened it. It searches that folder, its parents, and up to three
-  levels below it for `dbt_project.yml`.
-- **Worktrees.** Every git command runs inside that worktree. The panel therefore shows
-  that worktree's branch, commits, and uncommitted files. Open one panel per worktree.
+- **Project.** dbt-pane looks for `dbt_project.yml` in the starting folder and its
+  parents, then up to three levels below it. The starting folder is `--project-dir`, or
+  the focused Herdr pane's folder when it runs as a plugin, or the current folder.
+  `--follow` searches only upwards, so focusing your home folder does not pick a random
+  project below it.
+- **Worktrees.** Every git command runs inside the project's worktree, so dbt-pane shows
+  that worktree's branch, commits, and uncommitted files.
 - **Base branch.** The first ref that exists among `origin/main`, `main`, `origin/master`,
   and `master`. The remote branch is checked first, because a stale local `main` gives an
   older merge base, and the diff then includes other people's merged work. Changes are
   measured from the merge base to the working tree.
-- **Manifest.** When a project file changes, the panel runs `dbt parse` into its own
-  folder under the Herdr plugin state directory, so it never writes to your `target/`.
-  If `dbt_packages/` is missing, as in a new worktree, it runs `dbt deps` once first.
+- **Manifest.** When a project file changes, dbt-pane runs `dbt parse` into its own
+  folder, so it never writes to your `target/`. If `dbt_packages/` is missing, as in a new
+  worktree, it runs `dbt deps` once first. The folder is under the Herdr plugin state
+  directory when it runs as a plugin, and under `~/.cache/dbt-pane` otherwise.
 - **dbt debug.** Runs when the panel starts, when `dbt_project.yml` or `profiles.yml`
   changes, and when you press `d`. Values that look like secrets are masked.
-- **Refresh.** Every 2 seconds the panel checks git status and file modification times.
+- **Refresh.** Every 2 seconds dbt-pane checks git status and file modification times.
   It does more work only when something changed.
 
 ### dbt executable
 
-The panel uses the first match from this list:
+dbt-pane uses the first match from this list:
 
 1. `DBT_PANE_DBT`
 2. `.venv/bin/dbt` in the dbt project
@@ -140,7 +181,7 @@ The panel uses the first match from this list:
 4. `dbt` on `PATH`
 
 Herdr starts plugin commands with the server's environment, which often lacks the
-`PATH` from your shell profile. `scripts/launch.sh` adds your login shell's `PATH` before
+`PATH` from your shell profile. `herdr/launch.sh` adds your login shell's `PATH` before
 it starts the panel.
 
 ### Settings
@@ -151,11 +192,21 @@ it starts the panel.
 | `DBT_PANE_BASE` | Compare against this ref instead of main or master. |
 | `DBT_PANE_DBT` | Path to the dbt executable. |
 
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/dbt_pane/` | The dbt-pane terminal app |
+| `tests/` | Tests for the app |
+| `herdr-plugin.toml` | The Herdr plugin manifest. Herdr reads it from the repository root. |
+| `herdr/` | The Herdr plugin launcher |
+
 ## Develop
 
 ```sh
 uv sync
 uv run pytest
+uv run dbt-pane --project-dir path/to/dbt/project
 ```
 
 To test against [jaffle-shop](https://github.com/dbt-labs/jaffle-shop) on DuckDB:

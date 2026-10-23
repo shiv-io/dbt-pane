@@ -1,4 +1,6 @@
-id = "shiv-io.herdr-dbt"
+# Herdr plugin wrapper for the dbt-pane terminal app. Herdr reads this manifest from
+# the repository root; the plugin's own files live in herdr/.
+id = "shiv-io.dbt-pane"
 name = "dbt pane"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
@@ -6,19 +8,25 @@ description = "Side panel for a dbt worktree: changed models, target database an
 platforms = ["linux", "macos"]
 
 [[build]]
-command = ["sh", "scripts/launch.sh", "build"]
+command = ["sh", "herdr/launch.sh", "build"]
 
 [[actions]]
 id = "open"
 title = "Open dbt pane"
 contexts = ["workspace", "pane"]
-command = ["sh", "scripts/launch.sh", "open-split"]
+command = ["sh", "herdr/launch.sh", "open-split"]
 
 [[actions]]
 id = "open-tab"
 title = "Open dbt pane in a new tab"
 contexts = ["workspace", "pane"]
-command = ["sh", "scripts/launch.sh", "open-tab"]
+command = ["sh", "herdr/launch.sh", "open-tab"]
+
+[[actions]]
+id = "open-follow"
+title = "Open dbt pane that follows focus"
+contexts = ["workspace", "pane"]
+command = ["sh", "herdr/launch.sh", "open-follow"]
 
 # Herdr starts plugin panes in the plugin folder. dbt-pane reads the focused pane's
 # folder from HERDR_PLUGIN_CONTEXT_JSON to find the dbt project in that worktree.
@@ -26,4 +34,10 @@ command = ["sh", "scripts/launch.sh", "open-tab"]
 id = "panel"
 title = "dbt"
 placement = "split"
-command = ["sh", "scripts/launch.sh", "panel"]
+command = ["sh", "herdr/launch.sh", "panel"]
+
+[[panes]]
+id = "panel-follow"
+title = "dbt (follow)"
+placement = "split"
+command = ["sh", "herdr/launch.sh", "panel-follow"]
