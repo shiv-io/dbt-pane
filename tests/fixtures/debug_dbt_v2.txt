@@ -1,0 +1,18 @@
+       dbt 2.0.8
+   Loading profiles.yml
+ Debugging profile: dev
+ Debugging dbt version: 2.0.8
+ Debugging platform: macos aarch64 (unix)
+ Debugging adapter type: duckdb (remote)
+ Debugging dependencies:
+  git: OK
+ Debugging connection:
+  "path": "jaffle_shop.duckdb",
+  "database": "jaffle_shop",
+  "schema": "dev_sg"
+ Debugging connection test: OK
+  Debugged All checks passed!
+New version available 2.0.9 (run `dbt system update`)
+
+==================== Execution Summary =====================
+Finished 'debug' successfully for target 'dev' [378ms]

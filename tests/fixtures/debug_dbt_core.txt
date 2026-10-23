@@ -1,0 +1,34 @@
+[0m18:33:58  Running with dbt=1.12.6
+[0m18:33:58  dbt version: 1.12.6
+[0m18:33:58  python version: 3.12.12
+[0m18:33:58  python path: /home/dev/.venv/bin/python3
+[0m18:33:58  os info: macOS-26.6-arm64-arm-64bit
+[0m18:33:58  Using profiles dir at /home/dev/jaffle_shop
+[0m18:33:58  Using profiles.yml file at /home/dev/jaffle_shop/profiles.yml
+[0m18:33:58  Using dbt_project.yml file at /home/dev/jaffle_shop/dbt_project.yml
+[0m18:33:58  adapter type: duckdb
+[0m18:33:58  adapter version: 1.11.0
+[0m18:33:58  Configuration:
+[0m18:33:58    profiles.yml file [[32mOK found and valid[0m]
+[0m18:33:58    dbt_project.yml file [[32mOK found and valid[0m]
+[0m18:33:58  Required dependencies:
+[0m18:33:58   - git [[32mOK found[0m]
+
+[0m18:33:58  Connection:
+[0m18:33:58    database: jaffle_shop
+[0m18:33:58    schema: dev_sg
+[0m18:33:58    path: jaffle_shop.duckdb
+[0m18:33:58    config_options: None
+[0m18:33:58    extensions: None
+[0m18:33:58    settings: {}
+[0m18:33:58    external_root: .
+[0m18:33:58    use_credential_provider: None
+[0m18:33:58    attach: None
+[0m18:33:58    filesystems: None
+[0m18:33:58    remote: None
+[0m18:33:58    plugins: None
+[0m18:33:58    disable_transactions: False
+[0m18:33:58  Registered adapter: duckdb=1.11.0
+[0m18:33:58    Connection test: [[32mOK connection ok[0m]
+
+[0m18:33:58  [32mAll checks passed![0m
