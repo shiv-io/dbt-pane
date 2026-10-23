@@ -8,7 +8,8 @@ you work, and runs in any terminal, in tmux, or as a [Herdr](https://herdr.dev) 
 | Models | Models and other dbt resources changed on this worktree compared with the base branch, including uncommitted and untracked files. Each model shows its materialization and the relation it builds. |
 | Target | The database, schema, target, and adapter from `dbt debug`, the profiles file that dbt used, and where each changed model builds. |
 | Docs | Description changes for models, columns, sources, macros, and doc blocks, as word-level diffs. It also flags new columns that have no description. |
-| Lineage | Upstream and downstream trees for each changed model, seed, snapshot, or source. Changed nodes are yellow. Tests and metrics are summarised. |
+| Lineage | Upstream and downstream trees for each changed model, seed, snapshot, or source. Each changed model says what kind of change it is: columns, joins, filters, grain, column formulas, inputs, config, or formatting only. Unchanged downstream models show the columns they gain or lose. |
+| CLL | Column-level lineage for one changed model: where each column comes from, where it goes, and which columns it uses as join, filter, or grouping keys. New, removed, and changed columns come first. Needs dbt v2. |
 
 It works with dbt v2 and with dbt-core 1.x.
 
@@ -76,11 +77,106 @@ the results for each project it has seen, so switching back is quick.
 
 | Key | Action |
 |---|---|
-| `1` to `4` | Switch tab |
+| `1` to `5` | Switch tab |
+| `↑` `↓` and `Enter`, or a mouse click | Open a changed model in the code view |
 | `r` | Refresh now |
 | `d` | Run `dbt debug` again |
+| `a` | Compare with the merge base now, without waiting |
 | `[` and `]` | Show less or more lineage depth |
 | `q` | Quit |
+
+### Code view
+
+Open a model from the Models tab to see its code. The **Source** tab shows the file as it
+is in your worktree now. The **Compiled** tab shows the SQL with Jinja rendered, the same
+SQL that `dbt compile` writes. dbt-pane compiles only that model, in the background, as
+soon as you open it.
+
+| Key | Action |
+|---|---|
+| `1` and `2` | Switch between Source and Compiled |
+| `c` | Copy the compiled SQL |
+| `s` | Copy the source |
+| `f` | Copy a `select` of every column, one per line, from the model's full name |
+| `n` | Copy only the full name, `database.schema.table`, without quotes |
+| `r` | Compile again |
+| `Esc` or `q` | Back to the list |
+
+Copying uses `pbcopy`, `wl-copy`, `xclip`, or `xsel`, whichever is installed. Without
+one, for example over SSH, it asks the terminal to copy (OSC 52). Most modern terminals
+support that, but some turn it off by default.
+
+Compiling needs the same warehouse connection as `dbt compile`, because some macros run
+queries while they compile.
+
+`f` takes the column list from the best source it has: dbt v2 static analysis, then the
+final select of the compiled SQL, then the columns declared in YAML. The message after the
+copy says which source it used. YAML can miss columns, so the message warns you when it
+falls back to YAML.
+
+## Change types and column-level lineage
+
+When a worktree changes models, dbt-pane compiles them twice in the background: once at
+the merge base and once as the worktree is now. It then compares the two, model by model.
+
+### When the analysis runs
+
+Each compile covers only the changed models, everything upstream of them, and their direct
+children, for example `--select "+customers+1 +orders+1"`. Upstream models are included
+because static analysis needs their columns. Direct children are included so the Lineage tab
+can show which downstream models gain or lose columns.
+
+| Run | When |
+|---|---|
+| Merge base | Once for each merge base and set of changed models. The result is saved, so restarting the panel reuses it. It runs again after a rebase or merge moves the merge base, or when another model changes. |
+| Worktree | When the panel opens, and then after project files have been quiet for 10 seconds. A burst of saves causes one run. |
+| Neither | When there are no changed models, or the only edits are to descriptions in YAML or to `.md` doc blocks. Those cannot change the compiled SQL, so the Docs tab updates and the analysis does not run. |
+
+Set how it runs with `--analysis` or the `DBT_PANE_ANALYSIS` variable:
+
+| Mode | Behaviour |
+|---|---|
+| `auto` | The default. Runs as described above. |
+| `manual` | Runs only when you press `a`. The Lineage and CLL tabs say when the result is out of date. Use this for very large projects, or warehouses where metadata queries are slow or costly. |
+| `off` | Never runs. The Lineage tab shows only the dependency trees. |
+
+`DBT_PANE_ANALYSIS_QUIET` changes the 10-second wait, in seconds.
+
+The Lineage tab shows when the last comparison ran and how long each compile took, so you
+can judge whether `auto` suits a project.
+
+| Label | Meaning | How it is found |
+|---|---|---|
+| `schema` | Columns added or removed, or a column type changed | Column lists from both compiles |
+| `columns via upstream` | The model's SQL did not change, but it gains or loses columns through `select *` | Column lists from both compiles |
+| `join` | A join was added or removed, or its type or `on` condition changed | Parsing the compiled SQL |
+| `filter` | A `where`, `having`, or `qualify` clause was added, removed, or changed | Parsing the compiled SQL |
+| `grain` | A `group by` changed | Parsing the compiled SQL |
+| `column logic` | The formula behind an output column changed | Tracing each output column through the SQL |
+| `inputs` | The model reads from different models or sources | The two manifests |
+| `config` | Materialization, unique key, incremental strategy, or similar changed | The two manifests |
+| `formatting only` | Only comments, spacing, or case changed | Parsing the compiled SQL |
+| `no SQL change` | The compiled SQL is identical, for example a docs-only change | Parsing the compiled SQL |
+
+With **dbt v2**, both compiles use `--static-analysis strict --generate-info-schema`. That
+gives dbt's own column lists, column types, and column-level lineage, and it is what the CLL
+tab shows. Static analysis reads the column names and types of your source tables from the
+warehouse. That is a metadata lookup and does not read any rows.
+
+With **dbt-core**, dbt-pane uses SQL parsing only. Joins, filters, grain, and formatting are
+found the same way. Columns are known only where the final select lists them, so a model
+that ends in `select *` shows `columns: unknown`. The CLL tab is not available.
+
+In the CLL tab, a column is **copied** when its value passes through unchanged, and
+**derived** when it is computed from other columns. A **key** is a column that decides which
+rows exist, through a join, filter, or `group by`, without being part of the value. These
+labels come from dbt's static analysis.
+
+The merge base is extracted with `git archive` into the dbt-pane state folder, so no extra
+git worktree is registered in your repository. dbt runs from your worktree with
+`--project-dir` pointing at that copy, so relative paths in `profiles.yml`, such as a DuckDB
+file, still resolve. A project-local `profiles.yml` and the installed `dbt_packages/` are
+reused for the merge-base compile.
 
 ## Use with Herdr
 
@@ -191,6 +287,26 @@ it starts the panel.
 | `DBT_PANE_PROJECT_DIR` | Use this dbt project instead of searching. |
 | `DBT_PANE_BASE` | Compare against this ref instead of main or master. |
 | `DBT_PANE_DBT` | Path to the dbt executable. |
+| `DBT_PANE_ANALYSIS` | `auto`, `manual`, or `off`. See [When the analysis runs](#when-the-analysis-runs). |
+| `DBT_PANE_ANALYSIS_QUIET` | Seconds without edits before an automatic analysis. Defaults to 10. |
+
+Herdr does not pass your shell's environment to plugins. To set these for the Herdr panel,
+put them in a file called `env`, one `KEY=value` per line, in the folder that this command
+prints:
+
+```sh
+herdr plugin config-dir shiv-io.dbt-pane
+```
+
+For example:
+
+```sh
+config_dir=$(herdr plugin config-dir shiv-io.dbt-pane)
+mkdir -p "$config_dir"
+echo "DBT_PANE_ANALYSIS=manual" >> "$config_dir/env"
+```
+
+The setting applies to panels opened after the change.
 
 ## Repository layout
 

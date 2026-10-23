@@ -10,6 +10,14 @@ export PATH
 plugin_root=${HERDR_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 herdr_bin=${HERDR_BIN_PATH:-herdr}
 
+# Settings such as DBT_PANE_ANALYSIS=manual, one KEY=value per line, in the folder that
+# `herdr plugin config-dir shiv-io.dbt-pane` prints.
+if [ -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ] && [ -f "$HERDR_PLUGIN_CONFIG_DIR/env" ]; then
+  set -a
+  . "$HERDR_PLUGIN_CONFIG_DIR/env"
+  set +a
+fi
+
 bundled_version() {
   sed -n 's/^version = "\(.*\)"/\1/p' "$plugin_root/pyproject.toml" | head -n 1
 }

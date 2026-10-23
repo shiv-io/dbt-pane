@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 
 from dbt_pane import git
+from dbt_pane.changes import ChangeReport
 from dbt_pane.docs_diff import ResourceChange, compare_doc_blocks, compare_yaml
 from dbt_pane.manifest import CommandResult, Manifest
 from dbt_pane.project import DbtProject
@@ -52,6 +53,7 @@ class Snapshot:
     yaml_errors: list[tuple[str, str]] = field(default_factory=list)
     other_files: list[git.ChangedFile] = field(default_factory=list)
     outside_project: int = 0
+    report: ChangeReport | None = None
 
     @property
     def changed_uids(self) -> set[str]:

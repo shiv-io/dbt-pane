@@ -121,3 +121,34 @@ def load_manifest(target_dir: Path, project: DbtProject) -> Manifest | None:
         return None
     with path.open() as handle:
         return Manifest(json.load(handle), project)
+
+
+COMPILABLE_TYPES = {"model", "snapshot", "analysis"}
+
+
+@dataclass
+class CompiledNode:
+    result: CommandResult
+    sql: str | None
+
+
+def compile_node(dbt: str, project: DbtProject, node: dict, target_dir: Path) -> CompiledNode:
+    """Compile one node into a private target folder and read back its compiled file."""
+    compiled_path = target_dir / "compiled" / node["package_name"] / node["original_file_path"]
+    compiled_path.unlink(missing_ok=True)
+    result = _run(
+        [
+            dbt,
+            "compile",
+            "--select",
+            ".".join(node["fqn"]),
+            "--target-path",
+            str(target_dir),
+            "--log-path",
+            str(target_dir / "logs"),
+        ],
+        project.root,
+        PARSE_TIMEOUT_SECONDS,
+    )
+    sql = compiled_path.read_text() if result.ok and compiled_path.is_file() else None
+    return CompiledNode(result, sql)

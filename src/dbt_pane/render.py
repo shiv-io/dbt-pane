@@ -11,6 +11,7 @@ from rich.tree import Tree
 
 from dbt_pane.debug import DebugResult
 from dbt_pane.docs_diff import ResourceChange, word_diff
+from dbt_pane.render_changes import change_lines, kind_badges, ripple_text
 from dbt_pane.snapshot import ChangedResource, Snapshot
 
 STATUS_STYLE = {"added": "green", "removed": "red", "changed": "yellow"}
@@ -117,6 +118,10 @@ def _resource_row(snapshot: Snapshot, resource: ChangedResource) -> Text:
     line.append_text(_resource_label(resource))
     line.append("  ")
     line.append_text(_change_text(resource))
+    change = snapshot.report.changes.get(resource.uid) if snapshot.report and resource.uid else None
+    if change:
+        line.append("  ")
+        line.append_text(kind_badges(change))
     if snapshot.manifest and resource.uid and resource.resource_type in {"model", "seed", "snapshot"}:
         relation = snapshot.manifest.relation(resource.uid)
         materialized = snapshot.manifest.materialization(resource.uid)
@@ -125,32 +130,42 @@ def _resource_row(snapshot: Snapshot, resource: ChangedResource) -> Text:
     return line
 
 
-def models_view(snapshot: Snapshot) -> RenderableType:
-    parts: list[RenderableType] = []
+def models_notes(snapshot: Snapshot) -> RenderableType | None:
+    """Messages shown above the resource list: git problems and parse errors."""
     branch = snapshot.branch
     if branch is None:
         return _note("This dbt project is not inside a git repository.", "yellow")
     if branch.error:
         return _note(branch.error, "yellow")
+    parts: list[RenderableType] = []
     if branch.base_ref and branch.branch in {branch.base_ref, branch.base_ref.removeprefix("origin/")}:
         parts.append(_note(f"You are on {branch.branch}. Only uncommitted changes show here.", "yellow"))
-
     parts.extend(_parse_messages(snapshot))
+    return Group(*parts) if parts else None
 
+
+def resource_rows(snapshot: Snapshot) -> list[tuple[str | None, Text]]:
+    """(id, label) rows for the resource list. Rows with an id open the code view."""
+    if snapshot.branch is None or snapshot.branch.error:
+        return []
+    openable = set(snapshot.manifest.nodes) | set(snapshot.manifest.macros) if snapshot.manifest else set()
+    rows: list[tuple[str | None, Text]] = []
     models = snapshot.changed_models
     others = [r for r in snapshot.resources if r.resource_type != "model"]
-    parts.append(_section(f"Models changed ({len(models)})"))
-    if models:
-        for resource in models:
-            parts.append(_resource_row(snapshot, resource))
-    else:
-        parts.append(_note("No model changes on this branch."))
-
+    rows.append((None, _section(f"Models changed ({len(models)})")))
+    if not models:
+        rows.append((None, _note("No model changes on this branch.")))
+    for resource in models:
+        rows.append((resource.uid if resource.uid in openable else None, _resource_row(snapshot, resource)))
     if others:
-        parts.append(_section(f"Other dbt resources ({len(others)})"))
+        rows.append((None, _section(f"Other dbt resources ({len(others)})")))
         for resource in others:
-            parts.append(_resource_row(snapshot, resource))
+            rows.append((resource.uid if resource.uid in openable else None, _resource_row(snapshot, resource)))
+    return rows
 
+
+def other_files_view(snapshot: Snapshot) -> RenderableType | None:
+    parts: list[RenderableType] = []
     if snapshot.other_files:
         parts.append(_section(f"Other files in the project ({len(snapshot.other_files)})"))
         for change in snapshot.other_files:
@@ -159,7 +174,12 @@ def models_view(snapshot: Snapshot) -> RenderableType:
             parts.append(line)
     if snapshot.outside_project:
         parts.append(_note(f"\n{snapshot.outside_project} changed files are outside the dbt project and are not shown."))
-    return Group(*parts)
+    return Group(*parts) if parts else None
+
+
+def models_view(snapshot: Snapshot) -> RenderableType:
+    parts = [models_notes(snapshot), *(label for _, label in resource_rows(snapshot)), other_files_view(snapshot)]
+    return Group(*(p for p in parts if p is not None))
 
 
 def _parse_messages(snapshot: Snapshot) -> list[RenderableType]:
@@ -337,6 +357,8 @@ def _node_label(snapshot: Snapshot, uid: str, changed: set[str]) -> Text:
     if uid in changed:
         label.stylize("bold yellow")
         label.append(" ● changed", style="yellow")
+    elif snapshot.report and uid in snapshot.report.ripples:
+        label.append_text(ripple_text(snapshot.report.ripples[uid], manifest.display_name))
     return label
 
 
@@ -370,7 +392,17 @@ def _grow(snapshot: Snapshot, tree: Tree, uid: str, direction: str, depth: int, 
         tree.add(_note(_count(len(hidden), "test")))
 
 
-def lineage_view(snapshot: Snapshot, depth: int) -> RenderableType:
+def _root_label(snapshot: Snapshot, uid: str, changed: set[str]) -> RenderableType:
+    label = _node_label(snapshot, uid, changed)
+    change = snapshot.report.changes.get(uid) if snapshot.report else None
+    if change is None:
+        return label
+    label.append("  ")
+    label.append_text(kind_badges(change))
+    return Group(label, *(Padding(line, (0, 0, 0, 2)) for line in change_lines(change)))
+
+
+def lineage_view(snapshot: Snapshot, depth: int, analysis_status: str = "") -> RenderableType:
     if snapshot.manifest is None:
         return _note("No manifest yet. Lineage shows after dbt parse succeeds.")
     nodes = [
@@ -381,8 +413,10 @@ def lineage_view(snapshot: Snapshot, depth: int) -> RenderableType:
 
     changed = snapshot.changed_uids
     parts: list[RenderableType] = [_note(f"Depth {depth} each way. Press [ or ] to change it. Changed nodes are yellow.")]
+    if analysis_status:
+        parts.append(_note(analysis_status))
     for resource in nodes:
-        root = Tree(_node_label(snapshot, resource.uid, changed), guide_style="dim")
+        root = Tree(_root_label(snapshot, resource.uid, changed), guide_style="dim")
         upstream = root.add(Text("upstream", style="cyan"))
         _grow(snapshot, upstream, resource.uid, "up", depth, {resource.uid}, changed)
         if not upstream.children:
