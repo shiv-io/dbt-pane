@@ -54,6 +54,9 @@ class Snapshot:
     other_files: list[git.ChangedFile] = field(default_factory=list)
     outside_project: int = 0
     report: ChangeReport | None = None
+    environment_notes: list[str] = field(default_factory=list)
+    dbt_path: str | None = None
+    direnv_file: str | None = None
 
     @property
     def changed_uids(self) -> set[str]:

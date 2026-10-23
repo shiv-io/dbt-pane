@@ -18,6 +18,7 @@ from dbt_pane import __version__, git, render, render_changes
 from dbt_pane.analysis import analysis_signature
 from dbt_pane.analyzer import MODES, Analyzer, default_mode
 from dbt_pane.debug import DebugResult, run_debug
+from dbt_pane.environment import broken_links, direnv_for
 from dbt_pane.follow import FollowSource, detect_follow_source
 from dbt_pane.manifest import CommandResult, Manifest, install_packages, load_manifest, packages_missing, parse
 from dbt_pane.node_screen import NodeScreen
@@ -42,7 +43,8 @@ class Engine:
     def __init__(self, project: DbtProject, analysis_mode: str | None = None):
         self.project = project
         self.repo = git.repo_root(project.root)
-        self.dbt = find_dbt(project, self.repo)
+        self.main_checkout = git.main_checkout(self.repo) if self.repo else None
+        self.dbt = find_dbt(project, self.repo, self.main_checkout)
         self.target_dir = state_dir(project) / "target"
         self.compile_dir = state_dir(project) / "compile"
         self.analyzer = Analyzer(project, self.repo, self.dbt, state_dir(project), analysis_mode)
@@ -70,7 +72,7 @@ class Engine:
             if packages_missing(self.project) and not self._deps_attempted:
                 on_status("installing packages (dbt deps)…")
                 self._deps_attempted = True
-                self.deps_result = install_packages(self.dbt, self.project)
+                self.deps_result = install_packages(self.dbt, self.project, state_dir(self.project) / "logs")
                 files_signature = project_files_signature(self.project)
             on_status("parsing (dbt parse)…")
             self.parse_result = parse(self.dbt, self.project, self.target_dir)
@@ -82,7 +84,25 @@ class Engine:
         on_status("reading git…")
         branch = git.branch_state(self.repo) if self.repo else None
         self._last_seen = (git_signature, files_signature)
-        return build_snapshot(self.project, branch, self.manifest, self.parse_result, self.deps_result)
+        snapshot = build_snapshot(self.project, branch, self.manifest, self.parse_result, self.deps_result)
+        self._describe_environment(snapshot)
+        return snapshot
+
+    def _describe_environment(self, snapshot: Snapshot) -> None:
+        snapshot.dbt_path = self.dbt
+        direnv = direnv_for(self.project.root)
+        snapshot.direnv_file = direnv.rc_file if direnv.loaded else None
+        broken = broken_links(self.project.root)
+        if broken:
+            links = ", ".join(f"{name} → {target}" for name, target in broken)
+            snapshot.environment_notes.append(
+                f"This worktree has broken links: {links}. They point at files that no longer exist. "
+                "Recreate them, or remove them so dbt can create its own."
+            )
+        if direnv.problem:
+            snapshot.environment_notes.append(direnv.problem)
+        if any(name == ".venv" for name, _ in broken) and self.dbt:
+            snapshot.environment_notes.append(f"Using dbt from {self.dbt} instead of the worktree's .venv.")
 
 
 class DbtPaneApp(App):

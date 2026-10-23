@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+from dbt_pane.environment import dbt_env
+
+ANSI =re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 LOG_TIMESTAMP = re.compile(r"^\d{2}:\d{2}:\d{2}\s{1,2}")
 KEY_VALUE = re.compile(r'^\s*"?([A-Za-z0-9_]+)"?\s*:\s*(.*?)\s*,?\s*$')
 SECRET_KEYS = re.compile(r"password|passphrase|secret|token|private_key|api_key", re.IGNORECASE)
@@ -104,7 +105,7 @@ def parse_debug_output(text: str, returncode: int = 0) -> DebugResult:
 
 def run_debug(dbt: str, project_dir: Path) -> DebugResult:
     started = time.time()
-    env = {**os.environ, "NO_COLOR": "1", "DBT_USE_COLORS": "false", "DBT_SEND_ANONYMOUS_USAGE_STATS": "false"}
+    env = dbt_env(project_dir)
     try:
         completed = subprocess.run(
             [dbt, "debug"],

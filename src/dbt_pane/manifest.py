@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import time
 from collections import defaultdict
@@ -9,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dbt_pane.debug import clean_output
+from dbt_pane.environment import dbt_env
 from dbt_pane.project import DbtProject
 
 NODE_SECTIONS = ("nodes", "sources", "exposures", "metrics", "semantic_models", "saved_queries", "unit_tests", "functions")
@@ -81,7 +81,7 @@ class Manifest:
 
 def _run(command: list[str], cwd: Path, timeout: int) -> CommandResult:
     started = time.time()
-    env = {**os.environ, "NO_COLOR": "1", "DBT_USE_COLORS": "false", "DBT_SEND_ANONYMOUS_USAGE_STATS": "false"}
+    env = dbt_env(cwd)
     label = " ".join(command[:2])
     try:
         completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, env=env, timeout=timeout)
@@ -101,8 +101,8 @@ def packages_missing(project: DbtProject) -> bool:
     return not packages_dir.is_dir() or not any(packages_dir.iterdir())
 
 
-def install_packages(dbt: str, project: DbtProject) -> CommandResult:
-    return _run([dbt, "deps"], project.root, DEPS_TIMEOUT_SECONDS)
+def install_packages(dbt: str, project: DbtProject, log_dir: Path) -> CommandResult:
+    return _run([dbt, "deps", "--log-path", str(log_dir)], project.root, DEPS_TIMEOUT_SECONDS)
 
 
 def parse(dbt: str, project: DbtProject, target_dir: Path) -> CommandResult:

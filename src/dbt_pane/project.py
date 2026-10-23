@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from dbt_pane.environment import dbt_env
+
 SKIP_DIRS = {
     ".git",
     ".venv",
@@ -103,12 +105,20 @@ def load_project(root: Path) -> DbtProject:
     return DbtProject(root=root, name=str(config.get("name", root.name)), profile=config.get("profile"), config=config)
 
 
-def find_dbt(project: DbtProject, repo_root: Path | None) -> str | None:
+def find_dbt(project: DbtProject, repo_root: Path | None, main_checkout: Path | None = None) -> str | None:
+    """The project's own dbt first, so a dbt v2 binary on PATH never runs a dbt-core project by accident."""
     override = os.environ.get("DBT_PANE_DBT")
     if override:
         return override
     for base in filter(None, (project.root, repo_root)):
         candidate = base / ".venv" / "bin" / "dbt"
+        if candidate.is_file():
+            return str(candidate)
+    on_direnv_path = shutil.which("dbt", path=dbt_env(project.root).get("PATH"))
+    if on_direnv_path and on_direnv_path != shutil.which("dbt"):
+        return on_direnv_path
+    if main_checkout and repo_root:
+        candidate = main_checkout / os.path.relpath(project.root, repo_root) / ".venv" / "bin" / "dbt"
         if candidate.is_file():
             return str(candidate)
     return shutil.which("dbt")

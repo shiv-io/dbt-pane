@@ -269,12 +269,33 @@ command = "herdr plugin action invoke shiv-io.dbt-pane.open"
 
 ### dbt executable
 
-dbt-pane uses the first match from this list:
+dbt-pane uses the first match from this list, so a dbt v2 binary on `PATH` never runs a
+dbt-core project by accident:
 
 1. `DBT_PANE_DBT`
 2. `.venv/bin/dbt` in the dbt project
 3. `.venv/bin/dbt` at the repository root
-4. `dbt` on `PATH`
+4. `dbt` on the `PATH` that the project's `.envrc` sets, if direnv changes it
+5. `.venv/bin/dbt` in the main checkout, for linked worktrees that have no `.venv` of their own
+6. `dbt` on `PATH`
+
+The Target tab shows which one it used.
+
+### Environment variables and direnv
+
+Many projects put credentials in environment variables that `profiles.yml` reads with
+`env_var()`. When direnv is installed, dbt-pane asks it which variables the project's
+`.envrc` sets (`direnv export json`) and passes them to every dbt command. This works in
+the Herdr panel too, which otherwise starts without your shell's environment. Each worktree
+gets the variables of its own `.envrc`, or of the nearest one in a parent folder.
+
+dbt-pane never approves an `.envrc`. If direnv has not been allowed for a folder, the panel
+says so; run `direnv allow` in that folder. After you change `.envrc`, the panel picks up the
+new variables within about 15 seconds.
+
+If a worktree's setup script made symlinks, for example `.venv` or `.envrc` pointing at the
+main checkout, and that checkout has moved, the Models tab lists the broken links and where
+they point.
 
 Herdr starts plugin commands with the server's environment, which often lacks the
 `PATH` from your shell profile. `herdr/launch.sh` adds your login shell's `PATH` before

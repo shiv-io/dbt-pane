@@ -16,6 +16,7 @@ import yaml
 
 from dbt_pane import git
 from dbt_pane.debug import clean_output
+from dbt_pane.environment import dbt_env
 
 ANALYSIS_TIMEOUT_SECONDS = 900
 INFO_SCHEMA_SUBDIR = Path("info_schema") / "v1"
@@ -143,7 +144,7 @@ def run_analysis(
         command += ["--select", select]
     if static_analysis:
         command += ["--static-analysis", "strict", "--generate-info-schema"]
-    env = {**os.environ, "NO_COLOR": "1", "DBT_USE_COLORS": "false", "DBT_SEND_ANONYMOUS_USAGE_STATS": "false"}
+    env = dbt_env(run_from)
     try:
         completed = subprocess.run(
             command, cwd=run_from, capture_output=True, text=True, env=env, timeout=ANALYSIS_TIMEOUT_SECONDS

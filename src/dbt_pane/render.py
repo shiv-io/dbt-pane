@@ -137,7 +137,7 @@ def models_notes(snapshot: Snapshot) -> RenderableType | None:
         return _note("This dbt project is not inside a git repository.", "yellow")
     if branch.error:
         return _note(branch.error, "yellow")
-    parts: list[RenderableType] = []
+    parts: list[RenderableType] = [_note(note, "yellow") for note in snapshot.environment_notes]
     if branch.base_ref and branch.branch in {branch.base_ref, branch.base_ref.removeprefix("origin/")}:
         parts.append(_note(f"You are on {branch.branch}. Only uncommitted changes show here.", "yellow"))
     parts.extend(_parse_messages(snapshot))
@@ -223,6 +223,8 @@ def target_view(snapshot: Snapshot | None, debug: DebugResult | None, running: b
         ("dbt", debug.dbt_version),
         ("profiles.yml", debug.profiles_file),
         ("connection test", debug.connection_test),
+        ("dbt executable", snapshot.dbt_path if snapshot else None),
+        ("environment", f"direnv, {snapshot.direnv_file}" if snapshot and snapshot.direnv_file else None),
     ):
         if value:
             style = "bold green" if label in {"database", "schema"} else ""

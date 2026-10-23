@@ -167,3 +167,12 @@ def show_file(repo: Path, rev: str, path: str) -> str | None:
         return run_git(repo, "show", f"{rev}:{path}")
     except GitError:
         return None
+
+
+def main_checkout(repo: Path) -> Path | None:
+    """The repository's primary working tree, which linked worktrees often borrow .venv and .envrc from."""
+    try:
+        common = Path(run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+    except GitError:
+        return None
+    return common.parent if common.name == ".git" else None
