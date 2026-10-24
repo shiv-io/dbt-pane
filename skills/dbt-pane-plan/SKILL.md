@@ -58,21 +58,40 @@ disagree, the file is correct, so fix the file.
    to have the command, do the checks in the "Checks" section of the format reference
    yourself.
 
-6. **Ask for approval.** In chat, give a short summary: the title, one line per change,
+6. **Open dbt-pane.** The user reviews the plan in dbt-pane, so make sure it is open.
+   - If `HERDR_ENV` is `1`, you run inside Herdr. List the panes with
+     `herdr pane list --workspace "$HERDR_WORKSPACE_ID"`. A pane in the current tab
+     (`HERDR_TAB_ID`) already shows dbt-pane when its `label` is `dbt` or `dbt (follow)`,
+     or its `terminal_title` contains `dbt-pane`. If no pane does, open one beside you:
+
+     ```sh
+     herdr plugin pane open --plugin shiv-io.dbt-pane --entrypoint panel \
+       --placement split --direction right --target-pane "$HERDR_PANE_ID" --no-focus \
+       --env DBT_PANE_PROJECT_DIR="<project root>"
+     ```
+
+     `DBT_PANE_PROJECT_DIR` makes the pane show your project. Without it, the pane shows
+     the project of the pane that has focus, which can be a different worktree. If the
+     command fails, for example because the plugin is not installed, tell the user to
+     run `dbt-pane` from the project root in another terminal.
+   - Outside Herdr, tell the user to run `dbt-pane` from the project root in another
+     terminal, if it is not open already.
+
+7. **Ask for approval.** In chat, give a short summary: the title, one line per change,
    the warnings, and the open questions. Tell the user to review the Plan tab in dbt-pane
    (key `p`). Then stop and wait.
 
-7. **Record the approval.** Only after the user explicitly approves the plan in this
+8. **Record the approval.** Only after the user explicitly approves the plan in this
    conversation, set `approved_at` to the current time in ISO 8601 with a time zone, for
    example `2026-10-24T14:32:00-04:00`. Never set it for any other reason. If the user
    approves with changes, edit the plan first, then set `approved_at`.
 
-8. **Do the work.** Before the first edit, run `dbt-pane plan status`. Stop if it does not
+9. **Do the work.** Before the first edit, run `dbt-pane plan status`. Stop if it does not
    print `approved`. Keep to the plan.
 
-9. **Change the plan when the work shows it is wrong.** Edit `plan.yml`, delete the
-   `approved_at` line, tell the user what changed and why, and stop until they approve
-   again. Do not keep working on a plan that you changed after approval.
+10. **Change the plan when the work shows it is wrong.** Edit `plan.yml`, delete the
+    `approved_at` line, tell the user what changed and why, and stop until they approve
+    again. Do not keep working on a plan that you changed after approval.
 
-10. **Report at the end.** Run `dbt-pane plan show`. Say which changes are done, which
+11. **Report at the end.** Run `dbt-pane plan show`. Say which changes are done, which
     are not, and anything you changed that the plan does not list.

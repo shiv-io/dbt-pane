@@ -209,7 +209,9 @@ describes the file format.
 ### How it works
 
 1. The agent writes the plan and runs `dbt-pane plan check`, and fixes the errors.
-2. The Plan tab opens. Read the plan there, then approve it in the agent's chat.
+2. In Herdr, the agent opens dbt-pane beside its pane if it is not open yet. In other
+   terminals, run `dbt-pane` yourself. Read the plan in the Plan tab, then approve it in
+   the agent's chat.
 3. The agent writes `approved_at` into the plan and does the work.
 4. As files change, the Plan tab marks each planned change as done, not yet, done
    differently, or contradicted. It also lists changes that the plan does not include.
