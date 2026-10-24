@@ -5,6 +5,7 @@ you work, and runs in any terminal, in tmux, or as a [Herdr](https://herdr.dev) 
 
 | Tab | Shows |
 |---|---|
+| Plan | The change plan a coding agent wrote before it started, the checks on that plan, and how the work compares with it. Shown only when the worktree has a plan. See [Plan changes before an agent makes them](#plan-changes-before-an-agent-makes-them). |
 | Models | Models and other dbt resources changed on this worktree compared with the base branch, including uncommitted and untracked files. Each model shows its materialization and the relation it builds. |
 | Target | The database, schema, target, and adapter from `dbt debug`, the profiles file that dbt used, and where each changed model builds. |
 | Docs | Description changes for models, columns, sources, macros, and doc blocks, as word-level diffs. It also flags new columns that have no description. |
@@ -78,6 +79,7 @@ the results for each project it has seen, so switching back is quick.
 | Key | Action |
 |---|---|
 | `1` to `5` | Switch tab |
+| `p` | Show the Plan tab |
 | `↑` `↓` and `Enter`, or a mouse click | Open a changed model in the code view |
 | `r` | Refresh now |
 | `d` | Run `dbt debug` again |
@@ -121,16 +123,16 @@ the merge base and once as the worktree is now. It then compares the two, model 
 
 ### When the analysis runs
 
-Each compile covers only the changed models, everything upstream of them, and their direct
+Each compile covers only the changed models and the models a plan names, everything upstream of them, and their direct
 children, for example `--select "+customers+1 +orders+1"`. Upstream models are included
 because static analysis needs their columns. Direct children are included so the Lineage tab
 can show which downstream models gain or lose columns.
 
 | Run | When |
 |---|---|
-| Merge base | Once for each merge base and set of changed models. The result is saved, so restarting the panel reuses it. It runs again after a rebase or merge moves the merge base, or when another model changes. |
+| Merge base | Once for each merge base and set of changed or planned models. The result is saved, so restarting the panel reuses it. It runs again after a rebase or merge moves the merge base, or when another model changes. With a plan, it runs before any model changes. |
 | Worktree | When the panel opens, and then after project files have been quiet for 10 seconds. A burst of saves causes one run. |
-| Neither | When there are no changed models, or the only edits are to descriptions in YAML or to `.md` doc blocks. Those cannot change the compiled SQL, so the Docs tab updates and the analysis does not run. |
+| Neither | When there are no changed or planned models, or the only edits are to descriptions in YAML or to `.md` doc blocks. Those cannot change the compiled SQL, so the Docs tab updates and the analysis does not run. |
 
 Set how it runs with `--analysis` or the `DBT_PANE_ANALYSIS` variable:
 
@@ -177,6 +179,86 @@ git worktree is registered in your repository. dbt runs from your worktree with
 `--project-dir` pointing at that copy, so relative paths in `profiles.yml`, such as a DuckDB
 file, still resolve. A project-local `profiles.yml` and the installed `dbt_packages/` are
 reused for the merge-base compile.
+
+## Plan changes before an agent makes them
+
+A coding agent can write its plan to `.dbt-pane/plan.yml` in the dbt project before it
+changes anything. dbt-pane shows the plan, checks it against the project, and later
+compares the plan with what the agent actually changed.
+
+### Set up the agent skill
+
+The `dbt-pane-plan` agent skill tells the agent how to write the plan and when to wait for
+your approval. Install it for your agents:
+
+```sh
+npx skills add shiv-io/dbt-pane --skill dbt-pane-plan
+```
+
+Add `-g` to install it for all projects. Then add `.dbt-pane/` to your global gitignore,
+so plans are not committed.
+
+Ask the agent to plan the work, for example "plan this first". The agent also offers a
+plan before a risky change, such as removing or renaming a column, deleting or renaming a
+model, changing a model's grain, or changing an incremental model's config.
+[`skills/dbt-pane-plan/references/plan-format.md`](skills/dbt-pane-plan/references/plan-format.md)
+describes the file format.
+
+### How it works
+
+1. The agent writes the plan and runs `dbt-pane plan check`, and fixes the errors.
+2. The Plan tab opens. Read the plan there, then approve it in the agent's chat.
+3. The agent writes `approved_at` into the plan and does the work.
+4. As files change, the Plan tab marks each planned change as done, not yet, done
+   differently, or contradicted. It also lists changes that the plan does not include.
+
+| Result | Meaning |
+|---|---|
+| done | The change matches the plan. |
+| not yet | Nothing has happened for this part of the plan yet. |
+| done differently | The change partly matches, or it has extras, such as a column the plan did not list. |
+| contradicted | The change is the opposite of what the plan says, for example `grain: unchanged` while the `group by` of the final select changed. |
+
+The Models tab shows the same result next to each changed model, or `not in plan`.
+
+### What the checks look at
+
+As soon as a plan names models, dbt-pane compiles the merge base for those models, even
+before anything has changed. The checks then use the real column lists and, with dbt v2,
+column-level lineage. Until that compile finishes, or with `--analysis off`, the column
+checks use only the columns declared in YAML, and the Plan tab says so.
+
+The checks report:
+
+- models, columns, and `from` columns that do not exist, or names that already exist;
+- downstream users of a removed or renamed column, or of a deleted or renamed model: models
+  that have no entry in the plan, and tests, semantic models, metrics, and saved queries
+  that the plan does not mention by name;
+- column changes on incremental models and on models with an enforced contract;
+- updates to a model that do not say whether its columns or grain change.
+
+### Approval history
+
+Each time `approved_at` gets a new value, dbt-pane saves a copy of the plan in its state
+folder. If the plan changes after an approval, the Plan tab says "edited after approval"
+and lists the changes that are new or changed since then. A second approval shows as
+"approved 2 times", with the changes since the earlier approval.
+
+A plan belongs to one branch. When the current branch is different, the Plan tab says so
+and does not compare. `dbt-pane plan archive` moves the old plan and its history to the
+state folder.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `dbt-pane plan check` | Checks the plan and prints the results. Exits 1 when there are errors. Add `--json` for JSON. |
+| `dbt-pane plan status` | Prints `draft`, `approved`, `edited after approval`, `approval removed`, or `other branch`. Exits 0 only when approved. |
+| `dbt-pane plan show` | Prints the plan, the checks, and how the work compares with the plan, for example to paste into a pull request. |
+| `dbt-pane plan archive` | Moves the plan and its approval history out of the worktree. |
+
+Each command takes `--project-dir`. `dbt-pane --once` also prints the plan when there is
+one.
 
 ## Use with Herdr
 
@@ -337,6 +419,7 @@ The setting applies to panels opened after the change.
 | `tests/` | Tests for the app |
 | `herdr-plugin.toml` | The Herdr plugin manifest. Herdr reads it from the repository root. |
 | `herdr/` | The Herdr plugin launcher |
+| `skills/dbt-pane-plan/` | The agent skill for writing change plans |
 
 ## Develop
 

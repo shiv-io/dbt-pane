@@ -1,0 +1,59 @@
+version: 1
+branch: feat/customer-order-cadence
+title: Add order cadence to customers and rename pretax spend
+summary: >
+  The retention team needs to know how often each customer orders. This adds the average
+  gap between orders to customers. It also renames lifetime_spend_pretax to
+  lifetime_subtotal so that it uses the same word as orders.subtotal.
+
+changes:
+  - model: int_customer_order_intervals
+    action: create
+    why: One row per order with the days since the same customer's previous order.
+    path: models/intermediate/int_customer_order_intervals.sql
+    materialized: view
+    grain: one row per order
+    reads:
+      add: [orders]
+    columns:
+      add:
+        - name: order_id
+          from: [orders.order_id]
+        - name: customer_id
+          from: [orders.customer_id]
+        - name: ordered_at
+          from: [orders.ordered_at]
+        - name: days_since_previous_order
+          type: integer
+          description: Days since the same customer's previous order. Null on a customer's first order.
+          from: [orders.ordered_at]
+    tests:
+      add: [unique on order_id, not_null on customer_id]
+
+  - model: customers
+    action: update
+    why: Add the average gap between orders, and rename pretax spend.
+    grain: unchanged
+    config: unchanged
+    reads:
+      add: [int_customer_order_intervals]
+    columns:
+      add:
+        - name: avg_days_between_orders
+          type: numeric
+          description: Average number of days between a customer's consecutive orders. Null for customers with one order.
+          from: [int_customer_order_intervals.days_since_previous_order]
+      rename:
+        - from: lifetime_spend_pretax
+          to: lifetime_subtotal
+    logic: Left join an average of days_since_previous_order, grouped by customer_id.
+    tests:
+      change: [the expression_is_true test that adds pretax spend and tax uses the new name]
+    notes: >
+      The semantic model in customers.yml has a metric named lifetime_spend_pretax. It moves
+      to lifetime_subtotal, and so do the metric average_order_value and the saved query
+      customer_order_metrics, which use it.
+
+open_questions:
+  - Should avg_days_between_orders ignore gaps longer than one year?
+  - lifetime_spend_pretax may be used by dashboards outside dbt. Should we keep the old name as an alias for one release?

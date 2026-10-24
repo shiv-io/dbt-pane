@@ -4,7 +4,7 @@ id = "shiv-io.dbt-pane"
 name = "dbt pane"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
-description = "Side panel for a dbt worktree: changed models, target database and schema, documentation changes, and lineage"
+description = "Side panel for a dbt worktree: change plans, changed models, target database and schema, documentation changes, and lineage"
 platforms = ["linux", "macos"]
 
 [[build]]

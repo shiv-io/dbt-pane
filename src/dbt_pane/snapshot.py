@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -10,7 +11,12 @@ from dbt_pane import git
 from dbt_pane.changes import ChangeReport
 from dbt_pane.docs_diff import ResourceChange, compare_doc_blocks, compare_yaml
 from dbt_pane.manifest import CommandResult, Manifest
+from dbt_pane.plan import PLAN_PATH, PlanFile
+from dbt_pane.plan_history import ApprovalState
 from dbt_pane.project import DbtProject
+
+if TYPE_CHECKING:
+    from dbt_pane.plan_compare import PlanView
 
 RESOURCE_ORDER = ["model", "seed", "snapshot", "source", "macro", "test", "unit_test", "analysis", "exposure", "metric"]
 FILE_REASONS = {".sql": "SQL", ".py": "Python", ".csv": "seed data"}
@@ -57,6 +63,9 @@ class Snapshot:
     environment_notes: list[str] = field(default_factory=list)
     dbt_path: str | None = None
     direnv_file: str | None = None
+    plan_file: PlanFile | None = None
+    plan_approval: ApprovalState | None = None
+    plan_view: PlanView | None = None
 
     @property
     def changed_uids(self) -> set[str]:
@@ -144,6 +153,8 @@ def build_snapshot(
             snapshot.outside_project += 1
             continue
         rel = change.path[len(prefix) :]
+        if PurePosixPath(rel).parts[:1] == PLAN_PATH.parts[:1]:
+            continue
         suffix = PurePosixPath(rel).suffix.lower()
 
         if rel == "dbt_project.yml":

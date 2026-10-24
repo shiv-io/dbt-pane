@@ -12,6 +12,7 @@ from rich.tree import Tree
 from dbt_pane.debug import DebugResult
 from dbt_pane.docs_diff import ResourceChange, word_diff
 from dbt_pane.render_changes import change_lines, kind_badges, ripple_text
+from dbt_pane.render_plan import resource_marker
 from dbt_pane.snapshot import ChangedResource, Snapshot
 
 STATUS_STYLE = {"added": "green", "removed": "red", "changed": "yellow"}
@@ -122,6 +123,10 @@ def _resource_row(snapshot: Snapshot, resource: ChangedResource) -> Text:
     if change:
         line.append("  ")
         line.append_text(kind_badges(change))
+    marker = resource_marker(snapshot, resource)
+    if marker:
+        line.append("  ")
+        line.append_text(marker)
     if snapshot.manifest and resource.uid and resource.resource_type in {"model", "seed", "snapshot"}:
         relation = snapshot.manifest.relation(resource.uid)
         materialized = snapshot.manifest.materialization(resource.uid)

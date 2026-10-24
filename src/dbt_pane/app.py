@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import threading
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Footer, OptionList, Select, Static, TabbedContent, TabPane
 from textual.widgets.option_list import Option
 
-from dbt_pane import __version__, git, render, render_changes
+from dbt_pane import __version__, git, render, render_changes, render_plan
 from dbt_pane.analysis import analysis_signature
 from dbt_pane.analyzer import MODES, Analyzer, default_mode
 from dbt_pane.debug import DebugResult, run_debug
@@ -22,6 +23,9 @@ from dbt_pane.environment import broken_links, direnv_for
 from dbt_pane.follow import FollowSource, detect_follow_source
 from dbt_pane.manifest import CommandResult, Manifest, install_packages, load_manifest, packages_missing, parse
 from dbt_pane.node_screen import NodeScreen
+from dbt_pane.plan import load_plan, plan_signature
+from dbt_pane.plan_compare import PlanView, evaluate
+from dbt_pane.plan_history import OTHER_BRANCH, approval_state
 from dbt_pane.project import (
     DbtProject,
     connection_config_signature,
@@ -47,6 +51,7 @@ class Engine:
         self.dbt = find_dbt(project, self.repo, self.main_checkout)
         self.target_dir = state_dir(project) / "target"
         self.compile_dir = state_dir(project) / "compile"
+        self.plan_dir = state_dir(project) / "plan"
         self.analyzer = Analyzer(project, self.repo, self.dbt, state_dir(project), analysis_mode)
         self.analysis_signature: tuple | None = None
         self.files_changed_at = 0.0
@@ -58,9 +63,12 @@ class Engine:
         self._parsed_files: tuple | None = None
         self._last_seen: tuple | None = None
 
+    def _signature(self, git_signature: tuple, files_signature: tuple) -> tuple:
+        return (git_signature, files_signature, plan_signature(self.project.root))
+
     def needs_refresh(self) -> bool:
-        current = (git.status_signature(self.repo) if self.repo else (), project_files_signature(self.project))
-        return current != self._last_seen
+        git_signature = git.status_signature(self.repo) if self.repo else ()
+        return self._signature(git_signature, project_files_signature(self.project)) != self._last_seen
 
     def collect(self, on_status=lambda message: None) -> Snapshot:
         git_signature = git.status_signature(self.repo) if self.repo else ()
@@ -83,10 +91,22 @@ class Engine:
 
         on_status("reading git…")
         branch = git.branch_state(self.repo) if self.repo else None
-        self._last_seen = (git_signature, files_signature)
+        self._last_seen = self._signature(git_signature, files_signature)
         snapshot = build_snapshot(self.project, branch, self.manifest, self.parse_result, self.deps_result)
         self._describe_environment(snapshot)
+        self._attach_plan(snapshot)
         return snapshot
+
+    def _attach_plan(self, snapshot: Snapshot) -> None:
+        snapshot.plan_file = load_plan(self.project.root)
+        plan = snapshot.plan_file.plan if snapshot.plan_file else None
+        branch = snapshot.branch.branch if snapshot.branch and snapshot.branch.branch != "HEAD" else None
+        snapshot.plan_approval = approval_state(self.plan_dir, plan, branch) if plan else None
+        planned = plan and snapshot.plan_approval.status != OTHER_BRANCH
+        self.analyzer.plan_names = plan.model_names() if planned else set()
+
+    def plan_view(self, snapshot: Snapshot, from_disk: bool = False) -> PlanView | None:
+        return evaluate(snapshot, self.analyzer.load_base(snapshot, from_disk), self.analyzer.report)
 
     def _describe_environment(self, snapshot: Snapshot) -> None:
         snapshot.dbt_path = self.dbt
@@ -121,6 +141,7 @@ class DbtPaneApp(App):
         Binding("a", "run_analysis", "Analyse"),
         Binding("left_square_bracket", "lineage_depth(-1)", "Less lineage"),
         Binding("right_square_bracket", "lineage_depth(1)", "More lineage"),
+        Binding("p", "show_tab('plan')", "Plan", show=False),
         Binding("1", "show_tab('models')", "Models", show=False),
         Binding("2", "show_tab('target')", "Target", show=False),
         Binding("3", "show_tab('docs')", "Docs", show=False),
@@ -147,6 +168,7 @@ class DbtPaneApp(App):
         self._model_rows: list[tuple[str | None, str]] | None = None
         self._cll_options_shown: list[tuple[str, str]] | None = None
         self._shown_analysis_status: str | None = None
+        self._plan_seen: dict[Path, tuple] = {}
 
     @property
     def main_view(self):
@@ -156,6 +178,9 @@ class DbtPaneApp(App):
     def compose(self) -> ComposeResult:
         yield Static(id="header")
         with TabbedContent(initial="models"):
+            with TabPane("Plan", id="plan"):
+                with VerticalScroll():
+                    yield Static(id="plan-body")
             with TabPane("Models", id="models"):
                 with VerticalScroll():
                     yield Static(id="models-notes")
@@ -173,6 +198,7 @@ class DbtPaneApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.main_view.query_one(TabbedContent).hide_tab("plan")
         self.main_view.query_one("#models-list", OptionList).focus()
         self._render_header()
         self.refresh_worker(force=True)
@@ -268,6 +294,7 @@ class DbtPaneApp(App):
         following = f" · following {self.follow.name}" if self.follow else ""
         self.status_text = f"updated {time.strftime('%H:%M:%S')}{following}"
         self._render_header()
+        self._render_plan()
         self._render_models(snapshot)
         self.main_view.query_one("#docs-body", Static).update(render.docs_view(snapshot))
         self._render_lineage()
@@ -293,6 +320,7 @@ class DbtPaneApp(App):
         status = self._analysis_status()
         if refresh or status != self._shown_analysis_status:
             self._shown_analysis_status = status
+            self._render_plan()
             self._render_lineage()
             self._render_cll()
 
@@ -330,6 +358,7 @@ class DbtPaneApp(App):
             return
         self.snapshot.report = engine.analyzer.report
         self._model_rows = None
+        self._render_plan()
         self._render_models(self.snapshot)
         self._render_lineage()
         self._render_cll()
@@ -392,6 +421,33 @@ class DbtPaneApp(App):
             return
         self.push_screen(NodeScreen(self.engine, self.snapshot.manifest, event.option.id))
 
+    def _render_plan(self) -> None:
+        snapshot = self.snapshot
+        if self.engine is None or snapshot is None:
+            return
+        snapshot.plan_view = self.engine.plan_view(snapshot)
+        tabs = self.main_view.query_one(TabbedContent)
+        if snapshot.plan_file is not None:
+            tabs.show_tab("plan")
+            body = render_plan.plan_view(snapshot.plan_view, self._analysis_status())
+            self.main_view.query_one("#plan-body", Static).update(body)
+        else:
+            if tabs.active == "plan":
+                tabs.active = "models"
+            tabs.hide_tab("plan")
+        self._switch_to_plan_once(snapshot)
+
+    def _switch_to_plan_once(self, snapshot: Snapshot) -> None:
+        """Opens the Plan tab when a plan appears or is approved, never on an ordinary refresh."""
+        plan = snapshot.plan_file.plan if snapshot.plan_file else None
+        state = (snapshot.plan_file is not None, plan.approved_at if plan else None)
+        root = snapshot.project.root
+        previous = self._plan_seen.get(root)
+        self._plan_seen[root] = state
+        first_project = previous is None and len(self._plan_seen) == 1
+        if state[0] and (first_project or (previous is not None and previous != state)):
+            self.main_view.query_one(TabbedContent).active = "plan"
+
     def _render_target(self) -> None:
         self.main_view.query_one("#target-body", Static).update(render.target_view(self.snapshot, self.debug_result, self.debug_running))
 
@@ -431,6 +487,9 @@ class DbtPaneApp(App):
         self._render_lineage()
 
     def action_show_tab(self, tab: str) -> None:
+        if tab == "plan" and (self.snapshot is None or self.snapshot.plan_file is None):
+            self.notify("No plan for this worktree.")
+            return
         self.main_view.query_one(TabbedContent).active = tab
 
 
@@ -451,6 +510,10 @@ def print_once(project_dir: str | None, with_debug: bool, depth: int, analysis_m
     snapshot.report = analyzer.report
     debug = run_debug(engine.dbt, project.root) if with_debug else None
     console.print(render.header(snapshot, debug, f"dbt at {engine.dbt}"))
+    snapshot.plan_view = engine.plan_view(snapshot, from_disk=True)
+    if snapshot.plan_view:
+        console.print(Rule("Plan"))
+        console.print(render_plan.plan_view(snapshot.plan_view))
     for title, body in (
         ("Models", render.models_view(snapshot)),
         ("Target", render.target_view(snapshot, debug, False)),
@@ -470,6 +533,10 @@ def print_once(project_dir: str | None, with_debug: bool, depth: int, analysis_m
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["plan"]:
+        from dbt_pane.plan_cli import main as plan_main
+
+        raise SystemExit(plan_main(sys.argv[2:]))
     parser = argparse.ArgumentParser(prog="dbt-pane", description="Show what the current dbt worktree changes.")
     parser.add_argument("--version", action="version", version=f"dbt-pane {__version__}")
     parser.add_argument(

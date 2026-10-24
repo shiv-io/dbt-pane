@@ -45,7 +45,9 @@ def _failed_nodes(run: AnalysisRun) -> list[str]:
 class Analyzer:
     """Compiles the merge base and the worktree, then compares them model by model.
 
-    Both compiles cover only the changed models, their ancestors, and their direct children.
+    Both compiles cover only the changed models and the models a plan names, their ancestors, and
+    their direct children. Before any model changes, a plan alone compiles the merge base, so the
+    plan checks get column lists and the result is reused once the work starts.
     """
 
     def __init__(self, project: DbtProject, repo: Path | None, dbt: str | None, state: Path, mode: str | None = None):
@@ -62,6 +64,7 @@ class Analyzer:
         self.base_key: tuple | None = None
         self.head_key: tuple | None = None
         self.report: ChangeReport | None = None
+        self.plan_names: set[str] = set()
         self.summary = ""
         self.progress = ""
         self.running = False
@@ -77,14 +80,27 @@ class Analyzer:
         }
 
     def _selector(self, snapshot: Snapshot) -> str:
-        return selector_for([snapshot.manifest.nodes[uid]["name"] for uid in self.targets(snapshot)])
+        names = {snapshot.manifest.nodes[uid]["name"] for uid in self.targets(snapshot)} | self.plan_names
+        return selector_for(sorted(names))
 
     def out_of_date(self, snapshot: Snapshot | None, signature: tuple | None) -> bool:
         branch = snapshot.branch if snapshot else None
-        if not self.dbt or not branch or not branch.merge_base or not self.targets(snapshot):
+        if not self.dbt or not branch or not branch.merge_base or snapshot.manifest is None:
             return False
         selector = self._selector(snapshot)
+        if not self.targets(snapshot):
+            return bool(self.plan_names) and self.base_key != (branch.merge_base, selector)
         return self.base_key != (branch.merge_base, selector) or self.head_key != (signature, selector)
+
+    def load_base(self, snapshot: Snapshot, from_disk: bool = False) -> AnalysisRun | None:
+        """The merge-base compile for the current selection, from memory or the disk cache. Never compiles."""
+        branch = snapshot.branch
+        if not branch or not branch.merge_base or snapshot.manifest is None:
+            return None
+        key = (branch.merge_base, self._selector(snapshot))
+        if self.base_key == key:
+            return self.base
+        return self._load_cached_base(key, is_dbt_v2(snapshot.manifest.data)) if from_disk else None
 
     def should_start(self, snapshot: Snapshot | None, signature: tuple | None, changed_at: float, force: bool = False) -> bool:
         if self.running or self.mode == "off" or not self.out_of_date(snapshot, signature):
@@ -144,6 +160,17 @@ class Analyzer:
                 if self.base.manifest:
                     (self.base_dir / BASE_MARKER).write_text(json.dumps(list(base_key)))
             self.base_key = base_key
+        label = f"{branch.base_ref} @ {merge_base_label(self.repo, branch.merge_base)}"
+        if not self.targets(snapshot):
+            self.report = None
+            if self.base.manifest is None:
+                tail = " ".join(self.base.output.strip().splitlines()[-3:])
+                self.summary = f"Analysis failed: dbt compile of the merge base did not finish. {tail}"
+            else:
+                when = time.strftime("%H:%M:%S", time.localtime(self.base.started))
+                timing = f"in {self.base.duration:.1f}s" if self.base.duration else "reused"
+                self.summary = f"Compiled {label} for the plan at {when} ({timing}). No models have changed yet."
+            return
         if self.head_key != (signature, selector):
             on_status("analysis: compiling this worktree…")
             self.head = run_analysis(
@@ -151,7 +178,6 @@ class Analyzer:
             )
             self.head_key = (signature, selector)
 
-        label = f"{branch.base_ref} @ {merge_base_label(self.repo, branch.merge_base)}"
         if self.base.manifest is None or self.head.manifest is None:
             failed = self.base if self.base.manifest is None else self.head
             tail = " ".join(failed.output.strip().splitlines()[-3:])
