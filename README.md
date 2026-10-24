@@ -1,5 +1,7 @@
 # dbt-pane
 
+![dbt-pane showing an agent's change plan, its checks, and how the work compares with it](docs/demo.gif)
+
 A terminal panel that shows what your dbt worktree changes. It refreshes by itself while
 you work, and runs in any terminal, in tmux, or as a [Herdr](https://herdr.dev) plugin.
 
@@ -25,7 +27,7 @@ It works with dbt v2 and with dbt-core 1.x.
 ### 2. Install dbt-pane
 
 ```sh
-uv tool install git+ssh://git@github.com/shiv-io/dbt-pane.git
+uv tool install git+https://github.com/shiv-io/dbt-pane.git
 ```
 
 This puts a `dbt-pane` command on your `PATH`. Check it:
